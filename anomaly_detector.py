@@ -1,12 +1,12 @@
 """
-Online Anomaly Detection Library
-Implements CUMSUM and EWMA algorithms for real-time server monitoring
+Online Anomaly Detection Library - Configurable Version
+Implements CUMSUM and EWMA algorithms with per-metric tuning
 """
 
 import psutil
 import time
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 
 class CUMSUM:
@@ -161,41 +161,161 @@ class ServerMetrics:
         }
 
 
-class AnomalyMonitor:
-    """Main monitoring class combining multiple detectors"""
+class MetricConfig:
+    """Configuration for a single metric"""
     
-    def __init__(self, min_anomaly_duration=3):
+    def __init__(
+        self,
+        algorithm: str = 'CUMSUM',  # 'CUMSUM' or 'EWMA'
+        # CUMSUM parameters
+        threshold: float = 5.0,
+        drift: float = 0.5,
+        reference_mean: Optional[float] = None,
+        # EWMA parameters
+        alpha: float = 0.3,
+        threshold_sigma: float = 3.0,
+        # Common parameters
+        enabled: bool = True,
+        description: str = ""
+    ):
+        self.algorithm = algorithm
+        self.threshold = threshold
+        self.drift = drift
+        self.reference_mean = reference_mean
+        self.alpha = alpha
+        self.threshold_sigma = threshold_sigma
+        self.enabled = enabled
+        self.description = description
+
+
+class AnomalyMonitor:
+    """Main monitoring class with configurable per-metric settings"""
+    
+    # Default configurations for each metric
+    DEFAULT_CONFIGS = {
+        'cpu_percent': MetricConfig(
+            algorithm='CUMSUM',
+            threshold=25.0,
+            drift=5.0,
+            reference_mean=30.0,
+            description='CPU usage - sustained changes only'
+        ),
+        'ram_percent': MetricConfig(
+            algorithm='CUMSUM',
+            threshold=10.0,  # MORE SENSITIVE - Lower threshold
+            drift=2.0,       # MORE SENSITIVE - Smaller drift
+            reference_mean=50.0,
+            description='RAM usage - more sensitive to fluctuations'
+        ),
+        'load_avg': MetricConfig(
+            algorithm='CUMSUM',
+            threshold=15.0,
+            drift=1.0,
+            reference_mean=2.0,
+            description='System load average'
+        ),
+        'net_sent_mb': MetricConfig(
+            algorithm='EWMA',
+            alpha=0.1,           # Smooth - less reactive
+            threshold_sigma=5.0,  # Less sensitive
+            description='Network bytes sent'
+        ),
+        'net_recv_mb': MetricConfig(
+            algorithm='EWMA',
+            alpha=0.1,
+            threshold_sigma=5.0,
+            description='Network bytes received'
+        ),
+        'disk_read_mb': MetricConfig(
+            algorithm='EWMA',
+            alpha=0.15,
+            threshold_sigma=4.5,
+            description='Disk read throughput'
+        ),
+        'disk_write_mb': MetricConfig(
+            algorithm='EWMA',
+            alpha=0.15,
+            threshold_sigma=4.5,
+            description='Disk write throughput'
+        ),
+        'connections': MetricConfig(
+            algorithm='EWMA',
+            alpha=0.15,
+            threshold_sigma=5.0,
+            description='Number of network connections'
+        ),
+    }
+    
+    def __init__(self, min_anomaly_duration=3, custom_configs: Optional[Dict[str, MetricConfig]] = None):
         """
         Args:
             min_anomaly_duration: Minimum number of consecutive anomalies before alerting
+            custom_configs: Dictionary of custom MetricConfig objects to override defaults
         """
-        # CUMSUM detectors for stable metrics (LESS SENSITIVE)
-        self.detectors = {
-            'cpu_percent': CUMSUM(threshold=25.0, drift=5.0),  # Increased - only sustained 5%+ changes
-            'ram_percent': CUMSUM(threshold=20.0, drift=3.0),  # Increased - slower RAM leaks only
-            'load_avg': CUMSUM(threshold=15.0, drift=1.0),     # Increased - real overload only
-        }
+        # Merge custom configs with defaults
+        self.configs = self.DEFAULT_CONFIGS.copy()
+        if custom_configs:
+            self.configs.update(custom_configs)
         
-        # EWMA detectors for variable metrics (LESS SENSITIVE)
-        self.ewma_detectors = {
-            'net_sent_mb': EWMA(alpha=0.1, threshold_sigma=5.0),    # Lower alpha = smoother, higher sigma = less alerts
-            'net_recv_mb': EWMA(alpha=0.1, threshold_sigma=5.0),    # Same as above
-            'disk_read_mb': EWMA(alpha=0.15, threshold_sigma=4.5),  # Reduced sensitivity
-            'disk_write_mb': EWMA(alpha=0.15, threshold_sigma=4.5), # Reduced sensitivity
-            'connections': EWMA(alpha=0.15, threshold_sigma=5.0),   # Higher threshold
-        }
+        # Initialize detectors based on configs
+        self.detectors = {}
+        self.ewma_detectors = {}
         
-        # Set reasonable defaults for CUMSUM reference means (YOUR SERVER'S BASELINE)
-        # TODO: Adjust these to YOUR server's normal values!
-        self.detectors['cpu_percent'].set_reference(30.0)  # Change to your avg CPU%
-        self.detectors['ram_percent'].set_reference(50.0)  # Change to your avg RAM%
-        self.detectors['load_avg'].set_reference(2.0)      # Change to your avg load
+        for metric_name, config in self.configs.items():
+            if not config.enabled:
+                continue
+                
+            if config.algorithm == 'CUMSUM':
+                detector = CUMSUM(threshold=config.threshold, drift=config.drift)
+                if config.reference_mean is not None:
+                    detector.set_reference(config.reference_mean)
+                self.detectors[metric_name] = detector
+                
+            elif config.algorithm == 'EWMA':
+                detector = EWMA(alpha=config.alpha, threshold_sigma=config.threshold_sigma)
+                self.ewma_detectors[metric_name] = detector
         
         self.anomaly_history: List[Dict] = []
         
         # Sustained anomaly tracking
         self.min_anomaly_duration = min_anomaly_duration
-        self.anomaly_counters = {}  # Track consecutive anomalies per metric
+        self.anomaly_counters = {}
+    
+    def update_metric_config(self, metric_name: str, config: MetricConfig):
+        """
+        Update configuration for a specific metric at runtime
+        
+        Args:
+            metric_name: Name of the metric to update
+            config: New MetricConfig object
+        """
+        self.configs[metric_name] = config
+        
+        # Remove old detector
+        if metric_name in self.detectors:
+            del self.detectors[metric_name]
+        if metric_name in self.ewma_detectors:
+            del self.ewma_detectors[metric_name]
+        
+        # Create new detector if enabled
+        if config.enabled:
+            if config.algorithm == 'CUMSUM':
+                detector = CUMSUM(threshold=config.threshold, drift=config.drift)
+                if config.reference_mean is not None:
+                    detector.set_reference(config.reference_mean)
+                self.detectors[metric_name] = detector
+                
+            elif config.algorithm == 'EWMA':
+                detector = EWMA(alpha=config.alpha, threshold_sigma=config.threshold_sigma)
+                self.ewma_detectors[metric_name] = detector
+    
+    def get_config(self, metric_name: str) -> Optional[MetricConfig]:
+        """Get configuration for a specific metric"""
+        return self.configs.get(metric_name)
+    
+    def get_all_configs(self) -> Dict[str, MetricConfig]:
+        """Get all metric configurations"""
+        return self.configs.copy()
         
     def check_metrics(self, metrics: Dict[str, float]) -> Dict:
         """
@@ -204,7 +324,7 @@ class AnomalyMonitor:
         Returns:
             Dictionary with anomaly detection results
         """
-        detected_anomalies = []  # Temporary storage for this check
+        detected_anomalies = []
         scores = {}
         
         # Check CUMSUM detectors
@@ -214,11 +334,16 @@ class AnomalyMonitor:
                 scores[metric_name] = score
                 
                 if is_anomaly:
+                    config = self.configs[metric_name]
                     detected_anomalies.append({
                         'metric': metric_name,
                         'value': metrics[metric_name],
                         'score': score,
-                        'algorithm': 'CUMSUM'
+                        'algorithm': 'CUMSUM',
+                        'config': {
+                            'threshold': config.threshold,
+                            'drift': config.drift
+                        }
                     })
         
         # Check EWMA detectors
@@ -228,11 +353,16 @@ class AnomalyMonitor:
                 scores[metric_name] = score
                 
                 if is_anomaly:
+                    config = self.configs[metric_name]
                     detected_anomalies.append({
                         'metric': metric_name,
                         'value': metrics[metric_name],
                         'score': score,
-                        'algorithm': 'EWMA'
+                        'algorithm': 'EWMA',
+                        'config': {
+                            'alpha': config.alpha,
+                            'threshold_sigma': config.threshold_sigma
+                        }
                     })
         
         # Filter for SUSTAINED anomalies only
@@ -286,3 +416,45 @@ class AnomalyMonitor:
             detector.reset()
         self.anomaly_history.clear()
         self.anomaly_counters.clear()
+
+
+# Example usage with custom configurations
+if __name__ == "__main__":
+    # Example 1: Use default configs
+    monitor = AnomalyMonitor()
+    
+    # Example 2: Customize specific metrics
+    custom_configs = {
+        'ram_percent': MetricConfig(
+            algorithm='CUMSUM',
+            threshold=5.0,      # Very sensitive
+            drift=1.0,          # Catch small changes
+            reference_mean=60.0,
+            description='RAM - very sensitive to memory leaks'
+        ),
+        'cpu_percent': MetricConfig(
+            algorithm='CUMSUM',
+            threshold=30.0,     # Less sensitive
+            drift=10.0,         # Only large sustained changes
+            reference_mean=25.0,
+            description='CPU - only major spikes'
+        ),
+    }
+    
+    monitor_custom = AnomalyMonitor(custom_configs=custom_configs)
+    
+    # Example 3: Update config at runtime
+    monitor.update_metric_config(
+        'net_sent_mb',
+        MetricConfig(
+            algorithm='EWMA',
+            alpha=0.3,           # More reactive
+            threshold_sigma=3.0,  # More sensitive
+            description='Network - catch traffic spikes faster'
+        )
+    )
+    
+    print("Configurations loaded:")
+    for metric, config in monitor.get_all_configs().items():
+        if config.enabled:
+            print(f"  {metric}: {config.algorithm} - {config.description}")

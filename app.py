@@ -1,10 +1,10 @@
 """
-Flask Server for Real-time Anomaly Monitoring
-Provides REST API for monitoring server metrics and detecting anomalies
+Flask Server for Real-time Anomaly Monitoring with Configuration
+Provides REST API for monitoring and configuring detection per metric
 """
 
-from flask import Flask, jsonify, render_template_string
-from anomaly_detector import AnomalyMonitor, ServerMetrics
+from flask import Flask, jsonify, render_template_string, request
+from anomaly_detector import AnomalyMonitor, ServerMetrics, MetricConfig
 import threading
 import time
 from datetime import datetime
@@ -68,12 +68,12 @@ def index():
                 background: #f5f5f5;
             }
             .container {
-                max-width: 1200px;
+                max-width: 1400px;
                 margin: 0 auto;
             }
-            h1 {
-                color: #333;
-            }
+            h1 { color: #333; }
+            h2 { color: #555; margin-top: 0; }
+            
             .card {
                 background: white;
                 padding: 20px;
@@ -81,6 +81,7 @@ def index():
                 border-radius: 8px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }
+            
             .metric {
                 display: inline-block;
                 margin: 10px 20px 10px 0;
@@ -93,6 +94,7 @@ def index():
                 color: #007bff;
                 font-size: 1.2em;
             }
+            
             .anomaly {
                 background: #fff3cd;
                 border-left: 4px solid #ffc107;
@@ -103,6 +105,7 @@ def index():
                 background: #f8d7da;
                 border-left-color: #dc3545;
             }
+            
             .status {
                 display: inline-block;
                 padding: 5px 15px;
@@ -117,6 +120,7 @@ def index():
                 background: #f8d7da;
                 color: #721c24;
             }
+            
             button {
                 padding: 10px 20px;
                 margin: 5px;
@@ -125,17 +129,71 @@ def index():
                 cursor: pointer;
                 font-size: 14px;
             }
-            .btn-primary {
-                background: #007bff;
-                color: white;
+            .btn-primary { background: #007bff; color: white; }
+            .btn-danger { background: #dc3545; color: white; }
+            .btn-secondary { background: #6c757d; color: white; }
+            .btn-success { background: #28a745; color: white; }
+            
+            .config-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 15px;
+                margin-top: 15px;
             }
-            .btn-danger {
-                background: #dc3545;
-                color: white;
+            
+            .config-item {
+                border: 1px solid #dee2e6;
+                padding: 15px;
+                border-radius: 5px;
+                background: #f8f9fa;
             }
-            .btn-secondary {
-                background: #6c757d;
-                color: white;
+            
+            .config-item h3 {
+                margin-top: 0;
+                color: #007bff;
+                font-size: 16px;
+            }
+            
+            .config-row {
+                margin: 8px 0;
+            }
+            
+            .config-row label {
+                display: inline-block;
+                width: 140px;
+                font-size: 13px;
+                color: #495057;
+            }
+            
+            .config-row input, .config-row select {
+                width: 120px;
+                padding: 4px 8px;
+                border: 1px solid #ced4da;
+                border-radius: 3px;
+                font-size: 13px;
+            }
+            
+            .config-row input[type="checkbox"] {
+                width: auto;
+            }
+            
+            .config-description {
+                font-size: 12px;
+                color: #6c757d;
+                font-style: italic;
+                margin-top: 5px;
+            }
+            
+            .two-column {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+            
+            @media (max-width: 968px) {
+                .two-column {
+                    grid-template-columns: 1fr;
+                }
             }
         </style>
     </head>
@@ -151,9 +209,16 @@ def index():
                 <button class="btn-secondary" onclick="refreshData()">Refresh</button>
             </div>
             
-            <div class="card">
-                <h2>Current Status</h2>
-                <div id="status"></div>
+            <div class="two-column">
+                <div class="card">
+                    <h2>Current Status</h2>
+                    <div id="status"></div>
+                </div>
+                
+                <div class="card">
+                    <h2>Anomaly Detection Results</h2>
+                    <div id="anomalies"></div>
+                </div>
             </div>
             
             <div class="card">
@@ -162,8 +227,12 @@ def index():
             </div>
             
             <div class="card">
-                <h2>Anomaly Detection Results</h2>
-                <div id="anomalies"></div>
+                <h2>⚙️ Detector Configuration</h2>
+                <p style="color: #6c757d; margin-bottom: 15px;">
+                    Tune each metric's detection parameters. Lower thresholds = more sensitive.
+                    Changes take effect immediately.
+                </p>
+                <div id="configs"></div>
             </div>
             
             <div class="card">
@@ -192,12 +261,60 @@ def index():
             }
             
             function resetDetectors() {
-                fetch('/api/reset', {method: 'POST'})
-                    .then(r => r.json())
-                    .then(data => {
-                        alert(data.message);
+                if (confirm('Reset all detectors? This will clear history and restart detection.')) {
+                    fetch('/api/reset', {method: 'POST'})
+                        .then(r => r.json())
+                        .then(data => {
+                            alert(data.message);
+                            refreshData();
+                        });
+                }
+            }
+            
+            function updateConfig(metric) {
+                const config = {
+                    enabled: document.getElementById(`${metric}_enabled`).checked,
+                    algorithm: document.getElementById(`${metric}_algorithm`).value,
+                };
+                
+                if (config.algorithm === 'CUMSUM') {
+                    config.threshold = parseFloat(document.getElementById(`${metric}_threshold`).value);
+                    config.drift = parseFloat(document.getElementById(`${metric}_drift`).value);
+                    config.reference_mean = parseFloat(document.getElementById(`${metric}_reference`).value);
+                } else {
+                    config.alpha = parseFloat(document.getElementById(`${metric}_alpha`).value);
+                    config.threshold_sigma = parseFloat(document.getElementById(`${metric}_sigma`).value);
+                }
+                
+                fetch(`/api/config/${metric}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert(`✓ Configuration updated for ${metric}`);
                         refreshData();
-                    });
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(err => alert(`Error: ${err}`));
+            }
+            
+            function toggleAlgorithm(metric) {
+                const algo = document.getElementById(`${metric}_algorithm`).value;
+                const cumsumDiv = document.getElementById(`${metric}_cumsum`);
+                const ewmaDiv = document.getElementById(`${metric}_ewma`);
+                
+                if (algo === 'CUMSUM') {
+                    cumsumDiv.style.display = 'block';
+                    ewmaDiv.style.display = 'none';
+                } else {
+                    cumsumDiv.style.display = 'none';
+                    ewmaDiv.style.display = 'block';
+                }
             }
             
             function refreshData() {
@@ -220,7 +337,7 @@ def index():
                     .then(r => r.json())
                     .then(data => {
                         let metricsDiv = document.getElementById('metrics');
-                        if (data.metrics) {
+                        if (data.metrics && Object.keys(data.metrics).length > 1) {
                             let html = '';
                             for (let [key, value] of Object.entries(data.metrics)) {
                                 if (key !== 'timestamp') {
@@ -244,20 +361,86 @@ def index():
                     .then(data => {
                         let anomaliesDiv = document.getElementById('anomalies');
                         if (data.has_anomalies) {
-                            let html = `<p><span class="status alert">⚠️ ${data.anomaly_count} Anomalies Detected</span></p>`;
+                            let html = `<p><span class="status alert">⚠️ ${data.anomaly_count} Anomalies</span></p>`;
                             data.anomalies.forEach(anomaly => {
                                 html += `
                                     <div class="anomaly ${anomaly.severity}">
                                         <strong>${anomaly.metric}</strong>: ${anomaly.value.toFixed(2)} 
-                                        (Score: ${anomaly.score.toFixed(2)}, Algorithm: ${anomaly.algorithm}, 
-                                        Severity: ${anomaly.severity}, Duration: ${anomaly.duration || 1} checks)
+                                        <br><small>Score: ${anomaly.score.toFixed(2)} | ${anomaly.algorithm} | 
+                                        Severity: ${anomaly.severity} | Duration: ${anomaly.duration || 1}</small>
                                     </div>
                                 `;
                             });
                             anomaliesDiv.innerHTML = html;
                         } else {
-                            anomaliesDiv.innerHTML = '<p><span class="status normal">✓ All metrics normal</span></p>';
+                            anomaliesDiv.innerHTML = '<p><span class="status normal">✓ All Normal</span></p>';
                         }
+                    });
+                
+                // Get configs
+                fetch('/api/config')
+                    .then(r => r.json())
+                    .then(data => {
+                        let configDiv = document.getElementById('configs');
+                        let html = '<div class="config-grid">';
+                        
+                        for (let [metric, config] of Object.entries(data.configs)) {
+                            html += `
+                                <div class="config-item">
+                                    <h3>${metric}</h3>
+                                    <div class="config-description">${config.description || ''}</div>
+                                    
+                                    <div class="config-row">
+                                        <label>
+                                            <input type="checkbox" id="${metric}_enabled" 
+                                                   ${config.enabled ? 'checked' : ''}>
+                                            Enabled
+                                        </label>
+                                    </div>
+                                    
+                                    <div class="config-row">
+                                        <label>Algorithm:</label>
+                                        <select id="${metric}_algorithm" onchange="toggleAlgorithm('${metric}')">
+                                            <option value="CUMSUM" ${config.algorithm === 'CUMSUM' ? 'selected' : ''}>CUMSUM</option>
+                                            <option value="EWMA" ${config.algorithm === 'EWMA' ? 'selected' : ''}>EWMA</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div id="${metric}_cumsum" style="display: ${config.algorithm === 'CUMSUM' ? 'block' : 'none'}">
+                                        <div class="config-row">
+                                            <label>Threshold:</label>
+                                            <input type="number" step="0.1" id="${metric}_threshold" value="${config.threshold}">
+                                        </div>
+                                        <div class="config-row">
+                                            <label>Drift:</label>
+                                            <input type="number" step="0.1" id="${metric}_drift" value="${config.drift}">
+                                        </div>
+                                        <div class="config-row">
+                                            <label>Reference Mean:</label>
+                                            <input type="number" step="0.1" id="${metric}_reference" value="${config.reference_mean || 0}">
+                                        </div>
+                                    </div>
+                                    
+                                    <div id="${metric}_ewma" style="display: ${config.algorithm === 'EWMA' ? 'block' : 'none'}">
+                                        <div class="config-row">
+                                            <label>Alpha (0-1):</label>
+                                            <input type="number" step="0.01" min="0" max="1" id="${metric}_alpha" value="${config.alpha}">
+                                        </div>
+                                        <div class="config-row">
+                                            <label>Threshold Sigma:</label>
+                                            <input type="number" step="0.1" id="${metric}_sigma" value="${config.threshold_sigma}">
+                                        </div>
+                                    </div>
+                                    
+                                    <button class="btn-success" onclick="updateConfig('${metric}')" style="width: 100%; margin-top: 10px;">
+                                        Update
+                                    </button>
+                                </div>
+                            `;
+                        }
+                        
+                        html += '</div>';
+                        configDiv.innerHTML = html;
                     });
                 
                 // Get history
@@ -266,7 +449,7 @@ def index():
                     .then(data => {
                         let historyDiv = document.getElementById('history');
                         if (data.history && data.history.length > 0) {
-                            let html = `<p><strong>Total anomalies detected:</strong> ${data.count}</p>`;
+                            let html = `<p><strong>Total anomalies:</strong> ${data.count}</p>`;
                             data.history.slice(-5).reverse().forEach(entry => {
                                 html += `
                                     <div class="anomaly">
@@ -327,6 +510,66 @@ def get_history():
     })
 
 
+@app.route('/api/config', methods=['GET'])
+def get_configs():
+    """Get all metric configurations"""
+    configs = monitor.get_all_configs()
+    config_dict = {}
+    
+    for metric_name, config in configs.items():
+        config_dict[metric_name] = {
+            'algorithm': config.algorithm,
+            'threshold': config.threshold,
+            'drift': config.drift,
+            'reference_mean': config.reference_mean,
+            'alpha': config.alpha,
+            'threshold_sigma': config.threshold_sigma,
+            'enabled': config.enabled,
+            'description': config.description
+        }
+    
+    return jsonify({'configs': config_dict})
+
+
+@app.route('/api/config/<metric_name>', methods=['POST'])
+def update_config(metric_name):
+    """Update configuration for a specific metric"""
+    try:
+        data = request.json
+        
+        config = MetricConfig(
+            algorithm=data.get('algorithm', 'CUMSUM'),
+            threshold=data.get('threshold', 5.0),
+            drift=data.get('drift', 0.5),
+            reference_mean=data.get('reference_mean'),
+            alpha=data.get('alpha', 0.3),
+            threshold_sigma=data.get('threshold_sigma', 3.0),
+            enabled=data.get('enabled', True),
+            description=monitor.get_config(metric_name).description if monitor.get_config(metric_name) else ""
+        )
+        
+        monitor.update_metric_config(metric_name, config)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Configuration updated for {metric_name}',
+            'config': {
+                'algorithm': config.algorithm,
+                'threshold': config.threshold,
+                'drift': config.drift,
+                'reference_mean': config.reference_mean,
+                'alpha': config.alpha,
+                'threshold_sigma': config.threshold_sigma,
+                'enabled': config.enabled
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 400
+
+
 @app.route('/api/start', methods=['POST'])
 def start_monitoring():
     """Start background monitoring"""
@@ -369,17 +612,19 @@ def get_status():
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("Server Anomaly Monitor Starting...")
+    print("Server Anomaly Monitor with Configuration")
     print("=" * 60)
     print("\n📊 Dashboard: http://localhost:5000")
     print("\n🔌 API Endpoints:")
-    print("  GET  /api/metrics  - Get current metrics")
-    print("  GET  /api/check    - Check for anomalies")
-    print("  GET  /api/history  - Get anomaly history")
-    print("  GET  /api/status   - Get monitoring status")
-    print("  POST /api/start    - Start monitoring")
-    print("  POST /api/stop     - Stop monitoring")
-    print("  POST /api/reset    - Reset detectors")
+    print("  GET  /api/metrics       - Get current metrics")
+    print("  GET  /api/check         - Check for anomalies")
+    print("  GET  /api/history       - Get anomaly history")
+    print("  GET  /api/config        - Get all configurations")
+    print("  POST /api/config/<name> - Update metric configuration")
+    print("  GET  /api/status        - Get monitoring status")
+    print("  POST /api/start         - Start monitoring")
+    print("  POST /api/stop          - Stop monitoring")
+    print("  POST /api/reset         - Reset detectors")
     print("\n" + "=" * 60)
     
     app.run(debug=True, host='0.0.0.0', port=5000)

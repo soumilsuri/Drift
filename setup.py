@@ -15,8 +15,8 @@ setup(
     description="Real-time Anomaly Detection Library for SRE with Discord notifications",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Drift-SRE Contributors",
-    url="https://github.com/yourusername/drift-sre",
+    author="soumilsuri",
+    url="https://github.com/soumilsuri/Drift",
     packages=find_packages(exclude=["tests", "examples", "docs"]),
     python_requires=">=3.8",
     install_requires=[
@@ -44,9 +44,9 @@ setup(
     ],
     keywords="monitoring, anomaly-detection, sre, discord, alerts, metrics",
     project_urls={
-        "Documentation": "https://github.com/yourusername/drift-sre#readme",
-        "Source": "https://github.com/yourusername/drift-sre",
-        "Tracker": "https://github.com/yourusername/drift-sre/issues",
+        "Documentation": "https://github.com/soumilsuri/Drift#readme",
+        "Source": "https://github.com/soumilsuri/Drift",
+        "Tracker": "https://github.com/soumilsuri/Drift/issues",
     },
 )
 

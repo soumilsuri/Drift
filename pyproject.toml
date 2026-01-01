@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "Drift-SRE Contributors"}
+    {name = "soumilsuri"}
 ]
 keywords = ["monitoring", "anomaly-detection", "sre", "discord", "alerts", "metrics"]
 classifiers = [
@@ -38,9 +38,9 @@ dev = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/yourusername/drift-sre#readme"
-Source = "https://github.com/yourusername/drift-sre"
-Tracker = "https://github.com/yourusername/drift-sre/issues"
+Documentation = "https://github.com/soumilsuri/Drift#readme"
+Source = "https://github.com/soumilsuri/Drift"
+Tracker = "https://github.com/soumilsuri/Drift/issues"
 
 [tool.setuptools]
 packages = ["drift"]

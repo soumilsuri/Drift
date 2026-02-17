@@ -9,7 +9,7 @@ from drift.monitor import DriftMonitor
 from drift.config import MetricConfig
 from drift.exceptions import DriftError, ConfigurationError, NotificationError
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 __all__ = [
     'DriftMonitor',
     'MetricConfig',

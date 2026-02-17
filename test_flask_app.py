@@ -9,9 +9,19 @@ import time
 
 app = Flask(__name__)
 
+# Optional: load local .env for convenience (won't error if missing)
+try:
+    from dotenv import load_dotenv  # type: ignore
+
+    load_dotenv(override=False)
+except Exception:
+    pass
+
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL") or None
+
 # Initialize monitor (without Discord webhook for testing)
 monitor = DriftMonitor(
-    discord_webhook=None,  # Set to your webhook URL for real notifications
+    discord_webhook=DISCORD_WEBHOOK_URL,
     check_interval=5,
     min_anomaly_duration=3,
     auto_start=True

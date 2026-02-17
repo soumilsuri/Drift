@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "drift-sre"
-version = "0.1.0"
+version = "0.1.2"
 description = "Real-time Anomaly Detection Library for SRE with Discord notifications"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -43,7 +43,12 @@ Source = "https://github.com/soumilsuri/Drift"
 Tracker = "https://github.com/soumilsuri/Drift/issues"
 
 [tool.setuptools]
-packages = ["drift"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["drift*"]
+exclude = ["tests*", "docs*", "examples*", "demo*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

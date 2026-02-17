@@ -11,7 +11,7 @@ long_description = readme_file.read_text(encoding="utf-8") if readme_file.exists
 
 setup(
     name="drift-sre",
-    version="0.1.0",
+    version="0.1.2",
     description="Real-time Anomaly Detection Library for SRE with Discord notifications",
     long_description=long_description,
     long_description_content_type="text/markdown",

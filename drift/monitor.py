@@ -79,7 +79,8 @@ class DriftMonitor:
         self.monitoring_active = False
         self.monitor_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
-        self.lock = threading.Lock()
+        # Re-entrant because some public APIs call other lock-taking methods.
+        self.lock = threading.RLock()
         
         # Latest metrics and results (thread-safe access)
         self.latest_metrics: Dict[str, Any] = {}
@@ -334,14 +335,25 @@ class DriftMonitor:
                     # Metric returned to normal - check if we need to send recovery notification
                     was_sustained = metric_name in previous_sustained
                     if was_sustained and self.notifier and metric_name in self.last_metric_values:
-                        self.notifier.update_metric_state(metric_name, False)
-                        self.notifier.send_recovery_notification(metric_name, self.last_metric_values[metric_name])
+                        # Send recovery (if enabled) and always clear anomaly state.
+                        # NOTE: Do not clear state before sending, or recovery will be suppressed.
+                        try:
+                            self.notifier.send_recovery_notification(
+                                metric_name, self.last_metric_values[metric_name]
+                            )
+                        finally:
+                            # Even if recovery notifications are disabled or fail, we must
+                            # clear anomaly state so future anomaly episodes can alert.
+                            self.notifier.update_metric_state(metric_name, False)
                     self.anomaly_counters[metric_name] = 0
             
-            # Update metric states for notifier
+            # Track last values for potential recovery notifications.
+            #
+            # IMPORTANT: Do NOT set notifier "anomaly state" here. The notifier debounces
+            # by suppressing alerts when a metric is already marked anomalous. If we mark
+            # it anomalous before sending, alerts will never be sent.
             if self.notifier:
                 for metric_name in sustained_metric_names:
-                    self.notifier.update_metric_state(metric_name, True)
                     if metric_name in metrics:
                         self.last_metric_values[metric_name] = metrics[metric_name]
             
